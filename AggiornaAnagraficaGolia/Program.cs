@@ -18,8 +18,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -31,23 +29,6 @@ internal sealed record Employee(string FullName,
 public class CompanyCache
 {
     public int CompanyId { get; set; }
-}
-
-public class RestWrapper<T>
-{
-    public T @return { get; set; }
-}
-
-public class GetDriversRestResult
-{
-    public LoginResult loginResult { get; set; }
-    public Driver[] drivers { get; set; }
-}
-
-public class SetDriverRestResult
-{
-    public LoginResult loginResult { get; set; }
-    public bool driverUpdated { get; set; }
 }
 
 class Program
@@ -94,53 +75,33 @@ class Program
             companyId = await FetchAndCacheCompanyId(loginReq);
         }
 
-        // 3) Client HTTP per REST
-        using var http = new HttpClient { BaseAddress = new Uri("https://manager.golia.goliaweb.it/") };
+        // 3) Client SOAP WCF
+        using var client = new GoliaManagerSOAPClient();
 
-        // 4) GetDrivers via REST
-        var getDriversPayload = new
+
+        // 4) GetDrivers via SOAP
+        var loginCompanyRequest = new LoginCompanyCultureRequest
         {
-            request = new
+            loginCredentials = loginReq,
+            companyId = companyId,
+            gmCulture = new GMCulture
             {
-                loginCredentials = new { login = user, password = pwd },
-                companyId,
-                gmCulture = new
-                {
-                    infringmentNation = "ITA",
-                    timeZone = "W. Europe Standard Time",
-                    translationLanguage = "it-IT"
-                }
+                infringmentNation = "ITA",
+                timeZone = "W. Europe Standard Time",
+                translationLanguage = "it-IT"
             }
         };
 
-        var getResp = await http.PostAsJsonAsync("services/GoliaManagerREST/GetDrivers", getDriversPayload);
-        getResp.EnsureSuccessStatusCode();
-
-        // Leggo il JSON grezzo
-        var rawJson = await getResp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(rawJson);
-        var root = doc.RootElement.GetProperty("GetDriversResult");
-
-        // Controllo loginResult
-        var loginResultElem = root.GetProperty("loginResult");
-        bool success = loginResultElem.GetProperty("success").GetBoolean();
-        if (!success)
+        var getRes = await client.GetDriversAsync(loginCompanyRequest);
+        if (getRes.loginResult is null || !getRes.loginResult.success)
         {
-            var errors = loginResultElem.GetProperty("errors")
-                                       .EnumerateArray()
-                                       .Select(e => e.GetString())
-                                       .Where(s => s != null);
-            Console.Error.WriteLine("Errore REST GetDrivers: " + string.Join(", ", errors));
+            var errors = getRes.loginResult?.errors ?? Array.Empty<string>();
+            Console.Error.WriteLine("Errore SOAP GetDrivers: " + string.Join(", ", errors));
             return;
         }
 
-        // Deserializzo l'array drivers
-        var driversElem = root.GetProperty("drivers");
-        var goliaDrivers = driversElem.ValueKind == JsonValueKind.Array
-            ? driversElem.Deserialize<Driver[]>() ?? Array.Empty<Driver>()
-            : Array.Empty<Driver>();
-
-        Console.WriteLine($"REST: trovati {goliaDrivers.Length} autisti");
+        var goliaDrivers = getRes.drivers ?? Array.Empty<Driver>();
+        Console.WriteLine($"SOAP: trovati {goliaDrivers.Length} autisti");
 
         // 5) Lettura dipendenti dal gestionale
         const string sql = """
@@ -187,79 +148,41 @@ class Program
             return;
         }
 
-        // 7) SetDriver via REST
+        // 7) SetDriver via SOAP
         int ok = 0, ko = 0;
         foreach (var (drv, emp) in changes)
         {
             drv.assumptionDate = emp.HireDate;
             drv.dismissalDate = emp.FireDate;
 
-            var setPayload = new
+            var setReq = new SetDriverRequest
             {
-                request = new
-                {
-                    loginCompanyRequest = new
-                    {
-                        loginCredentials = new { login = user, password = pwd },
-                        companyId,
-                        gmCulture = new
-                        {
-                            infringmentNation = "ITA",
-                            timeZone = "W. Europe Standard Time",
-                            translationLanguage = "it-IT"
-                        }
-                    },
-                    driver = new
-                    {
-                        driverId = drv.driverId,
-                        assumptionDate = drv.assumptionDate,
-                        dismissalDate = drv.dismissalDate
-                    }
-                }
+                loginCompanyRequest = loginCompanyRequest,
+                driver = drv
             };
 
 
 
-HttpResponseMessage setResp;
-            string rawSet;
+            SetDriverResult setRes;
             try
             {
-                setResp = await http.PostAsJsonAsync("services/GoliaManagerREST/SetDriver", setPayload);
-                rawSet = await setResp.Content.ReadAsStringAsync();
-                if (!setResp.IsSuccessStatusCode)
-                {
-                    Console.Error.WriteLine("❌ SetDriver BAD REQUEST (400)");
-                    Console.Error.WriteLine("-- Payload JSON --");
-                    Console.Error.WriteLine(JsonSerializer.Serialize(setPayload, new JsonSerializerOptions { WriteIndented = true }));
-                    Console.Error.WriteLine("-- Response body --");
-                    Console.Error.WriteLine(rawSet);
-                    continue;
-                }
+                setRes = await client.SetDriverAsync(setReq);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("❌ Errore durante PostAsJsonAsync:");
-                Console.Error.WriteLine(ex);
+                Console.Error.WriteLine($"❌ Errore SetDriver {drv.surname} {drv.name}: {ex.Message}");
+                ko++;
                 continue;
             }
-            using var docSet = JsonDocument.Parse(rawSet);
-            var rootSet = docSet.RootElement.GetProperty("SetDriverResult");
-
-            var loginResSet = rootSet.GetProperty("loginResult");
-            bool setOk = loginResSet.GetProperty("success").GetBoolean();
-            if (!setOk)
+            if (!setRes.loginResult.success)
             {
-                var errs = loginResSet.GetProperty("errors")
-                                     .EnumerateArray()
-                                     .Select(e => e.GetString())
-                                     .Where(s => s != null);
+                var errs = setRes.loginResult.errors ?? Array.Empty<string>();
                 Console.Error.WriteLine($"✗ Errore SetDriver {drv.surname} {drv.name}: " + string.Join(", ", errs));
                 ko++;
                 continue;
             }
 
-            bool updated = rootSet.GetProperty("driverUpdated").GetBoolean();
-            if (updated)
+            if (setRes.driverUpdated)
             {
                 Console.WriteLine($"✓ {drv.surname} {drv.name} aggiornato");
                 ok++;
