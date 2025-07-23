@@ -21,6 +21,8 @@ using System.Linq;
 using System.Globalization;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Net;
+using System.Net.Mail;
 
 internal sealed record Employee(string FullName,
                                 DateTime? HireDate,
@@ -38,8 +40,10 @@ class Program
        "Server=192.168.1.24\\sgam;Database=Sgam;User Id=sapara;Password=S@p4ra;Encrypt=True;TrustServerCertificate=True;";
     static async Task Main()
     {
-        // 1) Configurazione
-        IConfiguration config = new ConfigurationBuilder()
+        try
+        {
+            // 1) Configurazione
+            IConfiguration config = new ConfigurationBuilder()
             .AddJsonFile("appsettings.json", optional: true)
             .AddEnvironmentVariables()
             .Build();
@@ -110,8 +114,10 @@ class Program
         if (getRes.loginResult is null || !getRes.loginResult.success)
         {
             var errors = getRes.loginResult?.errors ?? Array.Empty<string>();
-            Console.Error.WriteLine("Errore SOAP GetDrivers: " + string.Join(", ", errors));
-            return;
+                var msg = "Errore SOAP GetDrivers: " + string.Join(", ", errors);
+                Console.Error.WriteLine(msg);
+                SendErrorEmail(new Exception(msg));
+                return;
         }
 
         var goliaDrivers = getRes.drivers ?? Array.Empty<Driver>();
@@ -229,7 +235,20 @@ class Program
             File.WriteAllText(dataFile, latest.ToString("yyyy-MM-dd HH:mm:ss.fff"));
         }
     }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Errore bloccante: {ex.Message}");
+            try
+            {
+                SendErrorEmail(ex);
+            }
+            catch (Exception emailEx)
+            {
+                Console.Error.WriteLine("Errore invio email: " + emailEx.Message);
+            }
+        }
 
+    }
 
     // Metodo helper per chiamare GetCompaniesAsync e salvare la cache
     static async Task<int> FetchAndCacheCompanyId(LoginRequest loginReq)
@@ -257,6 +276,19 @@ class Program
                                      new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"CompanyId {selected} salvato in companyCache.json");
         return selected;
+    }
+
+    static void SendErrorEmail(Exception ex)
+    {
+        using var message = new MailMessage();
+        message.From = new MailAddress("AnagraficaGolia@paratorispa.it");
+        message.To.Add("omar.tagliabue@paratorispa.it");
+        message.Subject = "Errore AggiornaAnagraficaGolia";
+        message.Body = ex.ToString();
+
+        using var smtp = new SmtpClient("192.168.1.11");
+        smtp.Credentials = new NetworkCredential("scanner@paraspa.local", "],M4`V~8q967");
+        smtp.Send(message);
     }
 
 }

@@ -22,4 +22,7 @@
 			<Namespace>GoliaService</Namespace>
 		</ServiceReference>
 	</ItemGroup>
+	<ItemGroup>
+		<None Include="Data.txt" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
 </Project>
