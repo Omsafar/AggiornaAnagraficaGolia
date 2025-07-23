@@ -277,8 +277,31 @@ class Program
         Console.WriteLine($"CompanyId {selected} salvato in companyCache.json");
         return selected;
     }
+    /*
+     PROVA
+    static void SendEmail(string subject, string body)
+    {
+        using var message = new MailMessage
+        {
+            From = new MailAddress("AnagraficaGolia@paratorispa.it"),
+            Subject = subject,
+            Body = body
+        };
+        message.To.Add("omar.tagliabue@paratorispa.it");
 
-    static void SendErrorEmail(Exception ex)
+        using var smtp = new SmtpClient("192.168.1.11")
+        {
+            Credentials = new NetworkCredential("scanner@paraspa.local", "],M4`V~8q967"),
+            DeliveryMethod = SmtpDeliveryMethod.Network,
+            UseDefaultCredentials = false,
+            EnableSsl = false, 
+            Port = 25          
+        };
+
+        smtp.Send(message);
+    }*/
+
+     static void SendErrorEmail(Exception ex)
     {
         using var message = new MailMessage();
         message.From = new MailAddress("AnagraficaGolia@paratorispa.it");
@@ -290,5 +313,4 @@ class Program
         smtp.Credentials = new NetworkCredential("scanner@paraspa.local", "],M4`V~8q967");
         smtp.Send(message);
     }
-
 }
