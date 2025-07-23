@@ -136,9 +136,14 @@ class Program
             if (diff) changes.Add((match, emp));
         }
 
-        Console.WriteLine($"Modifiche da applicare: {changes.Count}");
-        if (changes.Count == 0) return;
+        // Rimuove i duplicati di driverId prendendo la HireDate più recente
+        var uniqueChanges = changes
+            .GroupBy(c => c.drv.driverId)
+            .Select(g => g.OrderByDescending(x => x.emp.HireDate).First())
+            .ToList();
 
+        Console.WriteLine($"Modifiche da applicare: {uniqueChanges.Count}");
+        if (uniqueChanges.Count == 0) return;
         Console.Write("Procedere? (S/N): ");
         var key = Console.ReadKey().KeyChar;
         Console.WriteLine();
@@ -150,7 +155,7 @@ class Program
 
         // 7) SetDriver via SOAP
         int ok = 0, ko = 0;
-        foreach (var (drv, emp) in changes)
+        foreach (var (drv, emp) in uniqueChanges)
         {
             drv.assumptionDate = emp.HireDate;
             drv.dismissalDate = emp.FireDate;
@@ -172,6 +177,7 @@ class Program
             {
                 Console.Error.WriteLine($"❌ Errore SetDriver {drv.surname} {drv.name}: {ex.Message}");
                 ko++;
+                await Task.Delay(TimeSpan.FromSeconds(5));
                 continue;
             }
             if (!setRes.loginResult.success)
@@ -179,10 +185,8 @@ class Program
                 var errs = setRes.loginResult.errors ?? Array.Empty<string>();
                 Console.Error.WriteLine($"✗ Errore SetDriver {drv.surname} {drv.name}: " + string.Join(", ", errs));
                 ko++;
-                continue;
             }
-
-            if (setRes.driverUpdated)
+            else if (setRes.driverUpdated)
             {
                 Console.WriteLine($"✓ {drv.surname} {drv.name} aggiornato");
                 ok++;
@@ -192,11 +196,12 @@ class Program
                 Console.WriteLine($"– {drv.surname} {drv.name} nulla da fare");
                 ko++;
             }
+
+            await Task.Delay(TimeSpan.FromSeconds(5));
         }
 
         Console.WriteLine($"Fatto. OK: {ok}, KO: {ko}");
     }
-
 
 
     // Metodo helper per chiamare GetCompaniesAsync e salvare la cache
