@@ -18,13 +18,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 using System.Text.Json;
 using System.Threading.Tasks;
 
 internal sealed record Employee(string FullName,
                                 DateTime? HireDate,
-                                DateTime? FireDate);
-
+                                DateTime? FireDate,
+                                DateTime? UpdateDateTime);
 // piccola classe per serializzare il cache file
 public class CompanyCache
 {
@@ -79,6 +80,19 @@ class Program
         using var client = new GoliaManagerSOAPClient();
 
 
+        // Data.txt con la data dell'ultima modifica applicata
+        const string dataFile = "Data.txt";
+        DateTime lastUpdate = DateTime.MinValue;
+        if (File.Exists(dataFile))
+        {
+            var text = File.ReadAllText(dataFile).Trim();
+            DateTime.TryParseExact(text,
+                "yyyy-MM-dd HH:mm:ss.fff",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out lastUpdate);
+        }
+        
         // 4) GetDrivers via SOAP
         var loginCompanyRequest = new LoginCompanyCultureRequest
         {
@@ -105,10 +119,11 @@ class Program
 
         // 5) Lettura dipendenti dal gestionale
         const string sql = """
-    SELECT 
-        COGNOME_NOME    AS FullName,
-        DATA_ASSUNZIONE AS HireDate,
-        DATA_LICENZIAMENTO AS FireDate
+    SELECT
+    COGNOME_NOME       AS FullName,
+    DATA_ASSUNZIONE    AS HireDate,
+    DATA_LICENZIAMENTO AS FireDate,
+    UPDATE_DATA_ORA    AS UpdateDateTime
     FROM Sgam.dbo.T2BaseDipendenti
     WHERE AUTISTA = 'S'
     """;
@@ -116,6 +131,12 @@ class Program
         using var db = new SqlConnection(ConnectionString);
         var employees = (await db.QueryAsync<Employee>(sql)).ToList();
         Console.WriteLine($"Gestionale: {employees.Count} dipendenti autisti");
+
+        // filtra le righe modificate dopo l'ultima esecuzione
+        employees = employees
+            .Where(e => e.UpdateDateTime.HasValue && e.UpdateDateTime > lastUpdate)
+            .ToList();
+        Console.WriteLine($"Da aggiornare dopo {lastUpdate}: {employees.Count}");
 
         // 6) Calcolo differenze
         var changes = new List<(Driver drv, Employee emp)>();
@@ -201,6 +222,12 @@ class Program
         }
 
         Console.WriteLine($"Fatto. OK: {ok}, KO: {ko}");
+        if (uniqueChanges.Count > 0)
+        {
+            var latest = uniqueChanges
+                .Max(c => c.emp.UpdateDateTime) ?? lastUpdate;
+            File.WriteAllText(dataFile, latest.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+        }
     }
 
 
